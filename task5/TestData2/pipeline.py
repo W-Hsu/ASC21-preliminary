@@ -6,7 +6,7 @@ Max-Plank Institute for Radio Astronomy
 zhuwwpku@gmail.com
 """
 import os, sys, glob, re
-import sifting
+import presto.sifting as sifting
 from commands import getoutput
 import numpy as np
 
@@ -274,7 +274,7 @@ def ACCEL_sift(zmax):
 
     # Write candidates to STDOUT
     if len(cands):
-        cands.sort(sifting.cmp_sigma)
+        cands.sort()#sifting.cmp_sigma)
         #for cand in cands[:1]:
             #print cand.filename, cand.candnum, cand.p, cand.DMstr
         #sifting.write_candlist(cands)

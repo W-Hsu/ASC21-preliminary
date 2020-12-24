@@ -10,6 +10,9 @@ import presto.sifting as sifting
 from commands import getoutput
 import numpy as np
 
+import threading
+w_thread_count = 20
+
 #Tutorial_Mode = True
 Tutorial_Mode = False
 
@@ -26,6 +29,8 @@ if len(sys.argv) > 2:
 else:
     maskfile = None
 
+# whsu:
+# tutorial mode code, useless.
 def query(question, answer, input_type):
     print "Based on output of the last step, answer the following questions:"
     Ntry = 3
@@ -118,6 +123,33 @@ print '''
 
 '''
 
+# Parallelized #1
+# save log contents
+log_content = []
+# save inputs
+parallel1_input = []
+
+def parallel1(i, ddpl, lowDM, hiDM, dDM, DownSamp, NDMs, calls, Nout):
+    while i<len(parallel1_input):
+        print "calculatin' " + str(i)
+        dml = parallel1_input[i]
+        lodm = dml[0]
+        print dml
+        subDM = np.mean(dml)
+        if maskfile:
+            prepsubband = "prepsubband -sub -subdm %.2f -nsub %d -downsamp %d -mask ../%s -o %s %s" % (subDM, Nsub, subdownsamp, maskfile, rootname, '../'+filename)
+        else:
+            prepsubband = "prepsubband -sub -subdm %.2f -nsub %d -downsamp %d -o %s %s" % (subDM, Nsub, subdownsamp, rootname, '../'+filename)
+        print prepsubband
+        log_content[i] = getoutput(prepsubband)
+
+        subnames = rootname+"_DM%.2f.sub[0-9]*" % subDM
+        prepsubcmd = "prepsubband -nsub %(Nsub)d -lodm %(lowdm)f -dmstep %(dDM)f -numdms %(NDMs)d -numout %(Nout)d -downsamp %(DownSamp)d -o %(root)s %(subfile)s" % {
+                'Nsub':Nsub, 'lowdm':lodm, 'dDM':dDM, 'NDMs':NDMs, 'Nout':Nout, 'DownSamp':datdownsamp, 'root':rootname, 'subfile':subnames}
+        print prepsubcmd
+        log_content[i] = log_content[i] + getoutput(prepsubcmd)
+        i = i+w_thread_count
+
 cwd = os.getcwd()
 try:
     if not os.access('subbands', os.F_OK):
@@ -141,25 +173,21 @@ try:
         datdownsamp = 2
         if DownSamp < 2: subdownsamp = datdownsamp = 1
 
+        parallel1_input = []
+        log_content = [None] * len(dmlist)
+        threadlist = []
         for i, dml in enumerate(dmlist):
-            lodm = dml[0]
-            subDM = np.mean(dml)
-            if maskfile:
-                prepsubband = "prepsubband -sub -subdm %.2f -nsub %d -downsamp %d -mask ../%s -o %s %s" % (subDM, Nsub, subdownsamp, maskfile, rootname, '../'+filename)
-            else:
-                prepsubband = "prepsubband -sub -subdm %.2f -nsub %d -downsamp %d -o %s %s" % (subDM, Nsub, subdownsamp, rootname, '../'+filename)
-            print prepsubband
-            output = getoutput(prepsubband)
-            logfile.write(output)
+            parallel1_input.append(dml)
+        for i in range(w_thread_count):
+            threadlist.append(threading.Thread(target=parallel1, args=(i, ddpl, lowDM, hiDM, dDM, DownSamp, NDMs, calls, Nout)))
+        for i in threadlist:
+            i.start()
+        for i in threadlist:
+            i.join()
+        for i in log_content:
+            logfile.write(i)
 
-            subnames = rootname+"_DM%.2f.sub[0-9]*" % subDM
-            #prepsubcmd = "prepsubband -nsub %(Nsub)d -lodm %(lowdm)f -dmstep %(dDM)f -numdms %(NDMs)d -numout %(Nout)d -downsamp %(DownSamp)d -o %(root)s ../%(filfile)s" % {
-                    #'Nsub':Nsub, 'lowdm':lodm, 'dDM':dDM, 'NDMs':NDMs, 'Nout':Nout, 'DownSamp':datdownsamp, 'root':rootname, 'filfile':filename}
-            prepsubcmd = "prepsubband -nsub %(Nsub)d -lodm %(lowdm)f -dmstep %(dDM)f -numdms %(NDMs)d -numout %(Nout)d -downsamp %(DownSamp)d -o %(root)s %(subfile)s" % {
-                    'Nsub':Nsub, 'lowdm':lodm, 'dDM':dDM, 'NDMs':NDMs, 'Nout':Nout, 'DownSamp':datdownsamp, 'root':rootname, 'subfile':subnames}
-            print prepsubcmd
-            output = getoutput(prepsubcmd)
-            logfile.write(output)
+
     os.system('rm *.sub*')
     logfile.close()
     os.chdir(cwd)
@@ -175,24 +203,58 @@ print '''
 
 '''
 
-try:
-    os.chdir('subbands')
-    datfiles = glob.glob("*.dat")
-    logfile = open('fft.log', 'wt')
-    for df in datfiles:
+# parallelized #2 #3
+# save log contents
+log_content = []
+# save inputs
+parallel2_input = []
+parallel3_input = []
+
+def parallel2(i):
+    while i<len(parallel2_input):
+        df = parallel2_input[i]
         fftcmd = "realfft %s" % df
         print fftcmd
-        output = getoutput(fftcmd)
-        logfile.write(output)
-    logfile.close()
-    logfile = open('accelsearch.log', 'wt')
-    fftfiles = glob.glob("*.fft")
-    for fftf in fftfiles:
+        log_content[i] = getoutput(fftcmd)
+        i = i+w_thread_count
+
+def parallel3(i):
+    while i<len(parallel3_input):
+        fftf = parallel3_input[i]
         searchcmd = "accelsearch -zmax %d %s"  % (zmax, fftf)
         print searchcmd
-        output = getoutput(searchcmd)
-        logfile.write(output)
-    logfile.close()
+        log_content[i] = getoutput(searchcmd)
+        i=i+w_thread_count
+
+try:
+    os.chdir('subbands')
+
+    parallel2_input = glob.glob("*.dat")
+    log_content = [None] * len(parallel2_input)
+    threadlist = []
+    for i in range(w_thread_count):
+        threadlist.append(threading.Thread(target=parallel2, args=(i,)))
+    for i in threadlist:
+        i.start()
+    for i in threadlist:
+        i.join()
+    with open('fft.log', 'wt') as logfile:
+        for i in log_content:
+            logfile.write(i)
+    
+    parallel3_input = glob.glob("*.fft")
+    log_content = [None] * len(parallel3_input)
+    threadlist = []
+    for i in range(w_thread_count):
+        threadlist.append(threading.Thread(target=parallel3, args=(i,)))
+    for i in threadlist:
+        i.start()
+    for i in threadlist:
+        i.join()
+    with open('accelsearch.log', 'wt') as logfile:
+        for i in log_content:
+            logfile.write(i)
+    
     os.chdir(cwd)
 except:
     print 'failed at fft search.'
@@ -304,21 +366,38 @@ print '''
 
 '''
 
+# save log contents
+log_content = []
+# save inputs
+parallel4_input = []
+
+def parallel4(i):
+    while i<len(parallel4_input):
+        cand = parallel4_input[i]
+        foldcmd = "prepfold -n %(Nint)d -nsub %(Nsub)d -dm %(dm)f -p %(period)f %(filfile)s -o %(outfile)s -noxwin -nodmsearch" % {
+                'Nint':Nint, 'Nsub':Nsub, 'dm':cand.DM,  'period':cand.p, 'filfile':filename, 'outfile':rootname+'_DM'+cand.DMstr} #full plots
+        print foldcmd
+        log_content[i] = getoutput(foldcmd)
+        i = i+w_thread_count
+
 try:
     cwd = os.getcwd()
     os.chdir('subbands')
     os.system('ln -s ../%s %s' % (filename, filename))
-    logfile = open('folding.log', 'wt')
-    for cand in cands:
-        #foldcmd = "prepfold -dm %(dm)f -accelcand %(candnum)d -accelfile %(accelfile)s %(datfile)s -noxwin " % {
-        #'dm':cand.DM,  'accelfile':cand.filename+'.cand', 'candnum':cand.candnum, 'datfile':('%s_DM%s.dat' % (rootname, cand.DMstr))} #simple plots
-        foldcmd = "prepfold -n %(Nint)d -nsub %(Nsub)d -dm %(dm)f -p %(period)f %(filfile)s -o %(outfile)s -noxwin -nodmsearch" % {
-                'Nint':Nint, 'Nsub':Nsub, 'dm':cand.DM,  'period':cand.p, 'filfile':filename, 'outfile':rootname+'_DM'+cand.DMstr} #full plots
-        print foldcmd
-        #os.system(foldcmd)
-        output = getoutput(foldcmd)
-        logfile.write(output)
-    logfile.close()
+
+    parallel4_input = cands
+    log_content = [None] * len(parallel4_input)
+    threadlist = []
+    for i in range(w_thread_count):
+        threadlist.append(threading.Thread(target=parallel4, args=(i,)))
+    for i in threadlist:
+        i.start()
+    for i in threadlist:
+        i.join()
+    with open('folding.log', 'wt') as logfile:
+        for i in log_content:
+            logfile.write(i)
+
     os.chdir(cwd)
 except:
     print 'failed at folding candidates.'

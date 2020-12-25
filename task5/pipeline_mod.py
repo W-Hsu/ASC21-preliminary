@@ -13,6 +13,15 @@ import numpy as np
 import threading
 w_thread_count = 12
 
+import logging
+
+stdout_thread = None
+stdout_buffer = []
+def write_stdout():
+    for i in stdout_buffer:
+        sys.stdout.write(i)
+        sys.stdout.write('\n')
+
 log_thread = None
 log_buffer = []
 def write_log(log_filename):
@@ -133,6 +142,7 @@ print '''
 # Parallelized #1
 # save log contents
 log_buffer = []
+stdout_buffer = []
 # save inputs
 parallel1_input = []
 
@@ -147,13 +157,15 @@ def parallel1(i, ddpl, lowDM, hiDM, dDM, DownSamp, NDMs, calls, Nout):
             prepsubband = "prepsubband -sub -subdm %.2f -nsub %d -downsamp %d -mask ../%s -o %s %s" % (subDM, Nsub, subdownsamp, maskfile, rootname, '../'+filename)
         else:
             prepsubband = "prepsubband -sub -subdm %.2f -nsub %d -downsamp %d -o %s %s" % (subDM, Nsub, subdownsamp, rootname, '../'+filename)
-        print prepsubband
+        # write stdout and log in a safe way
+        stdout_buffer[i] = prepsubband + '\n'
         log_buffer[i] = getoutput(prepsubband)
 
         subnames = rootname+"_DM%.2f.sub[0-9]*" % subDM
         prepsubcmd = "prepsubband -nsub %(Nsub)d -lodm %(lowdm)f -dmstep %(dDM)f -numdms %(NDMs)d -numout %(Nout)d -downsamp %(DownSamp)d -o %(root)s %(subfile)s" % {
                 'Nsub':Nsub, 'lowdm':lodm, 'dDM':dDM, 'NDMs':NDMs, 'Nout':Nout, 'DownSamp':datdownsamp, 'root':rootname, 'subfile':subnames}
-        print prepsubcmd
+        # write stdout and log in a safe way
+        stdout_buffer[i] = stdout_buffer[i] + prepsubcmd
         log_buffer[i] = log_buffer[i] + getoutput(prepsubcmd)
         i = i+w_thread_count
 
@@ -180,6 +192,7 @@ try:
         if DownSamp < 2: subdownsamp = datdownsamp = 1
 
         parallel1_input = []
+        stdout_buffer = [None] * len(dmlist)
         log_buffer = [None] * len(dmlist)
         threadlist = []
         for i, dml in enumerate(dmlist):
@@ -191,6 +204,9 @@ try:
         for i in threadlist:
             i.join()
 
+        # write stdout in new thread
+        stdout_thread = threading.Thread(target=write_stdout)
+        stdout_thread.start()
         # write log in a new thread
         log_thread = threading.Thread(target=write_log, args=('dedisperse.log',))
         log_thread.start()
@@ -199,6 +215,7 @@ try:
     os.chdir(cwd)
 
 except:
+    logging.exception("123")
     print 'failed at prepsubband.'
     os.chdir(cwd)
     sys.exit(0)
@@ -212,6 +229,7 @@ print '''
 # parallelized #2 #3
 # save log contents
 log_buffer = []
+stdout_buffer = []
 # save inputs
 parallel2_input = []
 parallel3_input = []
@@ -220,7 +238,8 @@ def parallel2(i):
     while i<len(parallel2_input):
         df = parallel2_input[i]
         fftcmd = "realfft %s" % df
-        print fftcmd
+        # write stdout and log in a safe way
+        stdout_buffer[i] = fftcmd
         log_buffer[i] = getoutput(fftcmd)
         i = i+w_thread_count
 
@@ -228,7 +247,8 @@ def parallel3(i):
     while i<len(parallel3_input):
         fftf = parallel3_input[i]
         searchcmd = "accelsearch -zmax %d %s"  % (zmax, fftf)
-        print searchcmd
+        # write stdout and log in a safe way
+        stdout_buffer[i] =  searchcmd
         log_buffer[i] = getoutput(searchcmd)
         i=i+w_thread_count
 
@@ -237,6 +257,7 @@ try:
 
     parallel2_input = glob.glob("*.dat")
     log_buffer = [None] * len(parallel2_input)
+    stdout_buffer = [None] * len(parallel2_input)
     threadlist = []
     for i in range(w_thread_count):
         threadlist.append(threading.Thread(target=parallel2, args=(i,)))
@@ -244,12 +265,17 @@ try:
         i.start()
     for i in threadlist:
         i.join()
+    # make sure the stdout-writing from last step is completed
+    stdout_thread.join()
+    stdout_thread = threading.Thread(target=write_stdout)
+    stdout_thread.start()
     # make sure the log-writing from last step is completed
     log_thread.join()
     log_thread = threading.Thread(target=write_log, args=('fft.log',))
     log_thread.start()
     
     parallel3_input = glob.glob("*.fft")
+    stdout_buffer = [None] * len(parallel3_input)
     log_buffer = [None] * len(parallel3_input)
     threadlist = []
     for i in range(w_thread_count):
@@ -258,6 +284,10 @@ try:
         i.start()
     for i in threadlist:
         i.join()
+    # make sure the stdout-writing from last step is completed
+    stdout_thread.join()
+    stdout_thread = threading.Thread(target=write_stdout)
+    stdout_thread.start()
     # make sure the log-writing from last step is completed
     log_thread.join()
     log_thread = threading.Thread(target=write_log, args=('accelsearch.log',))
@@ -376,6 +406,7 @@ print '''
 
 # save log contents
 log_buffer = []
+stdout_buffer = []
 # save inputs
 parallel4_input = []
 
@@ -384,7 +415,8 @@ def parallel4(i):
         cand = parallel4_input[i]
         foldcmd = "prepfold -n %(Nint)d -nsub %(Nsub)d -dm %(dm)f -p %(period)f %(filfile)s -o %(outfile)s -noxwin -nodmsearch" % {
                 'Nint':Nint, 'Nsub':Nsub, 'dm':cand.DM,  'period':cand.p, 'filfile':filename, 'outfile':rootname+'_DM'+cand.DMstr} #full plots
-        print foldcmd
+        # write stdout and log in a safe way
+        stdout_buffer[i] = foldcmd
         log_buffer[i] = getoutput(foldcmd)
         i = i+w_thread_count
 
@@ -394,6 +426,7 @@ try:
     os.system('ln -s ../%s %s' % (filename, filename))
 
     parallel4_input = cands
+    stdout_buffer = [None] * len(parallel4_input)
     log_buffer = [None] * len(parallel4_input)
     threadlist = []
     for i in range(w_thread_count):
@@ -402,12 +435,17 @@ try:
         i.start()
     for i in threadlist:
         i.join()
+    # make sure the stdout-writing from last step is completed
+    stdout_thread.join()
+    stdout_thread = threading.Thread(target=write_stdout)
+    stdout_thread.start()
     # make sure the log-writing from last step is completed
     log_thread.join()
     log_thread = threading.Thread(target=write_log, args=('folding.log',))
     log_thread.start()
 
     os.chdir(cwd)
+    stdout_thread.join()
     log_thread.join()
 except:
     print 'failed at folding candidates.'

@@ -192,7 +192,8 @@ try:
             i.join()
 
         # write log in a new thread
-        log_thread = threading.Thread(write_log, ('dedisperse.log',)).start()
+        log_thread = threading.Thread(target=write_log, args=('dedisperse.log',))
+        log_thread.start()
 
     os.system('rm *.sub*')
     os.chdir(cwd)
@@ -201,8 +202,6 @@ except:
     print 'failed at prepsubband.'
     os.chdir(cwd)
     sys.exit(0)
-
-raw_input()
 
 print '''
 
@@ -247,7 +246,8 @@ try:
         i.join()
     # make sure the log-writing from last step is completed
     log_thread.join()
-    log_thread = threading.Thread(write_log, ('fft.log',))
+    log_thread = threading.Thread(target=write_log, args=('fft.log',))
+    log_thread.start()
     
     parallel3_input = glob.glob("*.fft")
     log_buffer = [None] * len(parallel3_input)
@@ -260,7 +260,8 @@ try:
         i.join()
     # make sure the log-writing from last step is completed
     log_thread.join()
-    log_thread = threading.Thread(write_log, ('accelsearch.log',))
+    log_thread = threading.Thread(target=write_log, args=('accelsearch.log',))
+    log_thread.start()
     
     os.chdir(cwd)
 except:
@@ -401,11 +402,13 @@ try:
         i.start()
     for i in threadlist:
         i.join()
-    with open('folding.log', 'wt') as logfile:
-        for i in log_buffer:
-            logfile.write(i)
+    # make sure the log-writing from last step is completed
+    log_thread.join()
+    log_thread = threading.Thread(target=write_log, args=('folding.log',))
+    log_thread.start()
 
     os.chdir(cwd)
+    log_thread.join()
 except:
     print 'failed at folding candidates.'
     os.chdir(cwd)

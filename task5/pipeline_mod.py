@@ -11,7 +11,14 @@ from commands import getoutput
 import numpy as np
 
 import threading
-w_thread_count = 20
+w_thread_count = 12
+
+log_thread = None
+log_buffer = []
+def write_log(log_filename):
+    with open(log_filename, 'wt') as logfile:
+        for i in log_buffer:
+            logfile.write(i)
 
 #Tutorial_Mode = True
 Tutorial_Mode = False
@@ -125,7 +132,7 @@ print '''
 
 # Parallelized #1
 # save log contents
-log_content = []
+log_buffer = []
 # save inputs
 parallel1_input = []
 
@@ -141,13 +148,13 @@ def parallel1(i, ddpl, lowDM, hiDM, dDM, DownSamp, NDMs, calls, Nout):
         else:
             prepsubband = "prepsubband -sub -subdm %.2f -nsub %d -downsamp %d -o %s %s" % (subDM, Nsub, subdownsamp, rootname, '../'+filename)
         print prepsubband
-        log_content[i] = getoutput(prepsubband)
+        log_buffer[i] = getoutput(prepsubband)
 
         subnames = rootname+"_DM%.2f.sub[0-9]*" % subDM
         prepsubcmd = "prepsubband -nsub %(Nsub)d -lodm %(lowdm)f -dmstep %(dDM)f -numdms %(NDMs)d -numout %(Nout)d -downsamp %(DownSamp)d -o %(root)s %(subfile)s" % {
                 'Nsub':Nsub, 'lowdm':lodm, 'dDM':dDM, 'NDMs':NDMs, 'Nout':Nout, 'DownSamp':datdownsamp, 'root':rootname, 'subfile':subnames}
         print prepsubcmd
-        log_content[i] = log_content[i] + getoutput(prepsubcmd)
+        log_buffer[i] = log_buffer[i] + getoutput(prepsubcmd)
         i = i+w_thread_count
 
 cwd = os.getcwd()
@@ -155,7 +162,6 @@ try:
     if not os.access('subbands', os.F_OK):
         os.mkdir('subbands')
     os.chdir('subbands')
-    logfile = open('dedisperse.log', 'wt')
     for line in ddplan:
         ddpl = line.split()
         lowDM = float(ddpl[0])
@@ -174,7 +180,7 @@ try:
         if DownSamp < 2: subdownsamp = datdownsamp = 1
 
         parallel1_input = []
-        log_content = [None] * len(dmlist)
+        log_buffer = [None] * len(dmlist)
         threadlist = []
         for i, dml in enumerate(dmlist):
             parallel1_input.append(dml)
@@ -184,18 +190,19 @@ try:
             i.start()
         for i in threadlist:
             i.join()
-        for i in log_content:
-            logfile.write(i)
 
+        # write log in a new thread
+        log_thread = threading.Thread(write_log, ('dedisperse.log',)).start()
 
     os.system('rm *.sub*')
-    logfile.close()
     os.chdir(cwd)
 
 except:
     print 'failed at prepsubband.'
     os.chdir(cwd)
     sys.exit(0)
+
+raw_input()
 
 print '''
 
@@ -205,7 +212,7 @@ print '''
 
 # parallelized #2 #3
 # save log contents
-log_content = []
+log_buffer = []
 # save inputs
 parallel2_input = []
 parallel3_input = []
@@ -215,7 +222,7 @@ def parallel2(i):
         df = parallel2_input[i]
         fftcmd = "realfft %s" % df
         print fftcmd
-        log_content[i] = getoutput(fftcmd)
+        log_buffer[i] = getoutput(fftcmd)
         i = i+w_thread_count
 
 def parallel3(i):
@@ -223,14 +230,14 @@ def parallel3(i):
         fftf = parallel3_input[i]
         searchcmd = "accelsearch -zmax %d %s"  % (zmax, fftf)
         print searchcmd
-        log_content[i] = getoutput(searchcmd)
+        log_buffer[i] = getoutput(searchcmd)
         i=i+w_thread_count
 
 try:
     os.chdir('subbands')
 
     parallel2_input = glob.glob("*.dat")
-    log_content = [None] * len(parallel2_input)
+    log_buffer = [None] * len(parallel2_input)
     threadlist = []
     for i in range(w_thread_count):
         threadlist.append(threading.Thread(target=parallel2, args=(i,)))
@@ -238,12 +245,12 @@ try:
         i.start()
     for i in threadlist:
         i.join()
-    with open('fft.log', 'wt') as logfile:
-        for i in log_content:
-            logfile.write(i)
+    # make sure the log-writing from last step is completed
+    log_thread.join()
+    log_thread = threading.Thread(write_log, ('fft.log',))
     
     parallel3_input = glob.glob("*.fft")
-    log_content = [None] * len(parallel3_input)
+    log_buffer = [None] * len(parallel3_input)
     threadlist = []
     for i in range(w_thread_count):
         threadlist.append(threading.Thread(target=parallel3, args=(i,)))
@@ -251,9 +258,9 @@ try:
         i.start()
     for i in threadlist:
         i.join()
-    with open('accelsearch.log', 'wt') as logfile:
-        for i in log_content:
-            logfile.write(i)
+    # make sure the log-writing from last step is completed
+    log_thread.join()
+    log_thread = threading.Thread(write_log, ('accelsearch.log',))
     
     os.chdir(cwd)
 except:
@@ -367,7 +374,7 @@ print '''
 '''
 
 # save log contents
-log_content = []
+log_buffer = []
 # save inputs
 parallel4_input = []
 
@@ -377,7 +384,7 @@ def parallel4(i):
         foldcmd = "prepfold -n %(Nint)d -nsub %(Nsub)d -dm %(dm)f -p %(period)f %(filfile)s -o %(outfile)s -noxwin -nodmsearch" % {
                 'Nint':Nint, 'Nsub':Nsub, 'dm':cand.DM,  'period':cand.p, 'filfile':filename, 'outfile':rootname+'_DM'+cand.DMstr} #full plots
         print foldcmd
-        log_content[i] = getoutput(foldcmd)
+        log_buffer[i] = getoutput(foldcmd)
         i = i+w_thread_count
 
 try:
@@ -386,7 +393,7 @@ try:
     os.system('ln -s ../%s %s' % (filename, filename))
 
     parallel4_input = cands
-    log_content = [None] * len(parallel4_input)
+    log_buffer = [None] * len(parallel4_input)
     threadlist = []
     for i in range(w_thread_count):
         threadlist.append(threading.Thread(target=parallel4, args=(i,)))
@@ -395,7 +402,7 @@ try:
     for i in threadlist:
         i.join()
     with open('folding.log', 'wt') as logfile:
-        for i in log_content:
+        for i in log_buffer:
             logfile.write(i)
 
     os.chdir(cwd)
